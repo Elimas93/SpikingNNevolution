@@ -2,6 +2,10 @@ from IPython.core.debugger import Tracer
 import numpy as np
 import matplotlib.pyplot as plt
 import nest
+import pickle
+import SpiNNNetwork4
+import datetime
+
 
 def get_population_spikes(pop_list):
     """
@@ -13,6 +17,27 @@ def get_population_spikes(pop_list):
         spiketimes = nest.GetStatus(pop.recorder._spike_detector.device, 'events')[0]['times']
         spikes_arraylist.append(spiketimes)
     return spikes_arraylist
+
+def get_population_spikes_in_2D_array(pop_list):
+    """ for NEST
+    retruns a 2d array of spiketimes for each population in pop_list"""
+    spiketimes_2D = []
+    #Tracer()()
+    for idx, pop in enumerate(pop_list):
+        spiketimes = nest.GetStatus(pop.recorder._spike_detector.device, 'events')[0]['times']
+        IDs=nest.GetStatus(pop.recorder._spike_detector.device,'events')[0]['senders']
+        if IDs.shape[0] == 0:
+            spiketimes_2D.append([])
+        else:
+            minID = min(IDs)
+            maxID = max(IDs)
+            N = maxID-minID
+            pop_neuron_spiketimes = []
+            for i in range(minID,maxID+1):
+                indices = np.where(IDs==i)[0]
+                pop_neuron_spiketimes.append(spiketimes[indices])
+            spiketimes_2D.append(pop_neuron_spiketimes)
+    return np.array(spiketimes_2D)
 
 def get_population_spikes_spiNNaker(pop_list):
     """
@@ -42,9 +67,11 @@ def retrieve_voltage_data(pop_list):
     :param pop_list: list with pyNN populations
     :return: v_list: list with voltage values
     """
+    if not isinstance(pop_list,list):
+        raise Exception('input parameter should be a list')
     v_list =[]
     for pop in pop_list:
-        v= pop[0].get_data('v').segments[0].analogsignalarrays[0]
+        v= pop.get_data('v').segments[0].analogsignalarrays[0]
         v_list.append(v)
     return v_list
 
@@ -54,6 +81,8 @@ def retrieve_voltage_data_spiNNaker(pop_list,N=None):
     :param N:        max number of populations to get voltages from
     :return: v_list: list with voltage values
     """
+    if not isinstance(pop_list,list):
+        raise Exception('input parameter should be a list')
 
     if N==None or N>len(pop_list):
         N=len(pop_list)
@@ -88,6 +117,7 @@ def get_population_activities(spikes, timebin, start, stop, pop_size):
         population_activities.append(population_activity)
     return population_activities
     """
+
     for spiketimes in spikes:
         population_activity = []
         for t in np.arange(start, stop, timebin):
@@ -118,7 +148,7 @@ def get_mean_PA(pop_activities):
         mean_PAs.append(mean_PA)
 """
 
-def plot_simulation(spiketrains_in,spiketrains_hidden_exc,spiketrains_hidden_inh,population_activities,input_population_activities,PA_timebin,res_size,input_size,sim_duration,hiddenP_size,hiddenPexc_size,plot_voltage_traces=False,v_hidden_populations=None):
+def plot_simulation(spiketrains_in,spiketrains_hidden_exc,spiketrains_hidden_inh,population_activities,input_population_activities,PA_timebin,res_size,input_size,sim_duration,hiddenP_size,hiddenPexc_size,plot_voltage_traces=False,v_hidden_populations_exc=None):
 
     N_hidden_populations = res_size
     # change figure size
@@ -159,19 +189,21 @@ def plot_simulation(spiketrains_in,spiketrains_hidden_exc,spiketrains_hidden_inh
 
     # subplot 3 (optional) - plot voltage of first X excitatory reservoir neurons
     if plot_voltage_traces:
-        Nvoltage_traces = 3
+        Nvoltage_traces = 50
         ax3 = fig0.add_subplot(413, sharex=ax1)
-        for idx in range(N_hidden_populations):
-            v_hiddenPexc = v_hidden_populations[0]
+        for idx in range(1):#N_hidden_populations
+            v = v_hidden_populations_exc[idx]
             for x in range(Nvoltage_traces):
-                signal = v_hiddenPexc[:, x]
+                signal = v[:, x]
                 signal = np.array([float(s) for s in signal])
-                ax3.plot(v_hiddenPexc.times, signal + 30 * x + idx * 30 * Nvoltage_traces, color='black')
-            v_hiddenPinh = v_hidden_populations[1]
+                ax3.plot(v.times, signal + 30 * x + idx * 30 * Nvoltage_traces, color='black')
+            """
+            v_hiddenPinh = v_hidden_populations[idx][1]
             for x in range(Nvoltage_traces):
                 signal = v_hiddenPinh[:, x]
                 signal = np.array([float(s) for s in signal])
                 ax3.plot(v_hiddenPinh.times, signal + 30 * x + 2 * idx * 30 * Nvoltage_traces, color='red')
+            """
         # for x in range(Nvoltage_traces):
         #     signal = v_input_populations[0][:, x]
         #     signal = np.array([float(s) for s in signal])
@@ -186,20 +218,20 @@ def plot_simulation(spiketrains_in,spiketrains_hidden_exc,spiketrains_hidden_inh
     for idx in range(N_hidden_populations):
         population_activity = np.array(population_activities[idx])
         if idx == 0:  # add label only once
-            ax4.plot(np.arange(0, sim_duration, PA_timebin), population_activity + idx * 1000, color='black',
+            ax4.plot(np.linspace(0, sim_duration, len(population_activity)), population_activity + idx * 1000, color='black',
                      label='Population Activity')
         else:
-            ax4.plot(np.arange(0, sim_duration, PA_timebin), population_activity + idx * 1000, color='black')
+            ax4.plot(np.linspace(0, sim_duration, len(population_activity)), population_activity + idx * 1000, color='black')
     summed_input_activities = [sum(x) for x in zip(*input_population_activities)]
     for idx in range(input_size):
         if idx ==0: # add label only once
-            ax4.plot(np.arange(0, sim_duration, PA_timebin), np.array(input_population_activities[idx]) + (res_size+idx)*1000, color='blue',
+            ax4.plot(np.linspace(0, sim_duration, len(input_population_activities[idx])), np.array(input_population_activities[idx]) + (res_size+idx)*1000, color='blue',
              label='Input Population Activity')
         else:
-            ax4.plot(np.arange(0, sim_duration, PA_timebin),np.array(input_population_activities[idx]) + (res_size+idx)*1000, color='blue')
+            ax4.plot(np.linspace(0, sim_duration, len(input_population_activities[idx])),np.array(input_population_activities[idx]) + (res_size+idx)*1000, color='blue')
     ax4.set_xlabel("time (ms)")
     ax4.set_ylabel("Activity (Hz)")
-    ax4.set_ylim(0,45000)
+    ax4.set_ylim(26800,28500)
     ax4.legend()
 
     # plot
@@ -211,8 +243,8 @@ def plot_simulation(spiketrains_in,spiketrains_hidden_exc,spiketrains_hidden_inh
     plt.rcParams["figure.figsize"][1] = 6.0
     return
 
-def plot_simulation_spiNNaker(spikes_in,spikes_hidden_exc,spikes_hidden_inh,population_activities,input_population_activities,PA_timebin,res_size,input_size,sim_duration,hiddenP_size,hiddenPexc_size,plot_voltage_traces=False,v_hidden_populations=None):
-
+def plot_simulation_spiNNaker(spikes_in,spikes_hidden_exc,spikes_hidden_inh,population_activities,input_population_activities,PA_timebin,res_size,input_size,sim_duration,hiddenP_size,hiddenPexc_size,plot_voltage_traces=False,v_hidden_populations_exc=None,readout_spikes=None,readout_activities=None):
+    """ plotting voltage traces still needs some adaptations"""
     N_hidden_populations = res_size
     # change figure size
     plt.rcParams["figure.figsize"][0] = 11.0
@@ -242,8 +274,15 @@ def plot_simulation_spiNNaker(spikes_in,spikes_hidden_exc,spikes_hidden_inh,popu
         y_exc = spikes_exc[:, 0] + idx * (hiddenP_size + 10)
         ax2.plot(spikes_exc[:,1], y_exc, '|', color='black', mew=2, markersize=1.5)
 
-        y_inh = spikes_inh[:, 0] + idx * (hiddenP_size + 10) + hiddenPexc_size
-        ax2.plot(spikes_inh[:,1], y_inh, '|', color='red', mew=2, markersize=1.5)
+        if spikes_inh.shape[0]>0:
+            y_inh = spikes_inh[:, 0] + idx * (hiddenP_size + 10) + hiddenPexc_size
+            ax2.plot(spikes_inh[:,1], y_inh, '|', color='red', mew=2, markersize=1.5)
+
+    if readout_spikes != None:
+        for idx,itm in enumerate(readout_spikes):
+            if itm.shape[0]>0:
+                y_readout = itm[:, 0]-(hiddenPexc_size+10)*(idx+1)
+                ax2.plot(itm[:, 1],y_readout,'|', color='orange',mew=2,markersize=2)
 
     ax2.set_xlim(0, sim_duration)
     ax2.set_ylabel('Neuron ID')
@@ -254,20 +293,20 @@ def plot_simulation_spiNNaker(spikes_in,spikes_hidden_exc,spikes_hidden_inh,popu
     if plot_voltage_traces:
         Nvoltage_traces = 3
         ax3 = fig0.add_subplot(413, sharex=ax1)
-        for idx in range(len(v_hidden_populations[0])):
-            v_hiddenPexc = v_hidden_populations[0]
+        for idx in range(len(v_hidden_populations_exc)):
+            v_hiddenPexc = v_hidden_populations_exc[idx]
             for neuronID in range(Nvoltage_traces):
-                voltages = v_hiddenPexc[idx][np.where(v_hiddenPexc[idx][:,0]==neuronID)]
+                voltages = v_hiddenPexc[np.where(v_hiddenPexc[:,0]==neuronID)]
                 x = voltages[:,1]
                 y = voltages[:,2]
                 ax3.plot(x, y + 30 * neuronID + idx * 30 * 2 * Nvoltage_traces, color='black')
 
-            v_hiddenPinh = v_hidden_populations[1]
-            for neuronID in range(Nvoltage_traces):
-                voltages = v_hiddenPinh[idx][np.where(v_hiddenPinh[idx][:,0]==neuronID)]
-                x = voltages[:,1]
-                y = voltages[:,2]
-                ax3.plot(x, y + 30 * neuronID + idx * 30 * 2 * Nvoltage_traces + 30*Nvoltage_traces, color='red')
+            # v_hiddenPinh = v_hidden_populations[1]
+            # for neuronID in range(Nvoltage_traces):
+            #     voltages = v_hiddenPinh[idx][np.where(v_hiddenPinh[idx][:,0]==neuronID)]
+            #     x = voltages[:,1]
+            #     y = voltages[:,2]
+            #     ax3.plot(x, y + 30 * neuronID + idx * 30 * 2 * Nvoltage_traces + 30*Nvoltage_traces, color='red')
 
             """
             for x in range(Nvoltage_traces):
@@ -289,26 +328,30 @@ def plot_simulation_spiNNaker(spikes_in,spikes_hidden_exc,spikes_hidden_inh,popu
         ax3.set_title('membrane potential of x Hidden Population neurons')
         ax3.legend()
 
-    # subplot 4 - plot population activity
-    ax4 = fig0.add_subplot(414, sharex=ax1)
-    for idx in range(N_hidden_populations):
-        population_activity = np.array(population_activities[idx])
-        if idx == 0:  # add label only once
-            ax4.plot(np.arange(0, sim_duration, PA_timebin), population_activity + idx * 1000, color='black',
-                     label='Population Activity')
-        else:
-            ax4.plot(np.arange(0, sim_duration, PA_timebin), population_activity + idx * 1000, color='black')
-    summed_input_activities = [sum(x) for x in zip(*input_population_activities)]
-    for idx in range(input_size):
-        if idx ==0: # add label only once
-            ax4.plot(np.arange(0, sim_duration, PA_timebin), np.array(input_population_activities[idx]) + (res_size+idx)*1000, color='blue',
-             label='Input Population Activity')
-        else:
-            ax4.plot(np.arange(0, sim_duration, PA_timebin),np.array(input_population_activities[idx]) + (res_size+idx)*1000, color='blue')
-    ax4.set_xlabel("time (ms)")
-    ax4.set_ylabel("Activity (Hz)")
-    # ax4.set_ylim(0,45000)
-    ax4.legend()
+    if population_activities != None:
+        # subplot 4 - plot population activity
+        ax4 = fig0.add_subplot(414, sharex=ax1)
+        for idx in range(N_hidden_populations):
+            population_activity = np.array(population_activities[idx])
+            if idx == 0:  # add label only once
+                ax4.plot(np.arange(0, sim_duration, PA_timebin), population_activity + idx * 1000, color='black',
+                         label='Population Activity')
+            else:
+                ax4.plot(np.arange(0, sim_duration, PA_timebin), population_activity + idx * 1000, color='black')
+        summed_input_activities = [sum(x) for x in zip(*input_population_activities)]
+        for idx in range(input_size):
+            if idx ==0: # add label only once
+                ax4.plot(np.arange(0, sim_duration, PA_timebin), np.array(input_population_activities[idx]) + (res_size+idx)*1000, color='blue',
+                 label='Input Population Activity')
+            else:
+                ax4.plot(np.arange(0, sim_duration, PA_timebin),np.array(input_population_activities[idx]) + (res_size+idx)*1000, color='blue')
+        if readout_activities!=None:
+            for activities in readout_activities:
+                ax4.plot(np.arange(0, sim_duration, PA_timebin),np.array(activities)-1000, color='orange')
+        ax4.set_xlabel("time (ms)")
+        ax4.set_ylabel("Activity (Hz)")
+        # ax4.set_ylim(0,45000)
+        ax4.legend()
 
     # plot
     plt.tight_layout()
@@ -335,21 +378,56 @@ def compare_states(ANN_states,SNN_states,res_size,n_it):
         rse += np.sum(np.sqrt(np.square(ANN_states[:, i][20:] - np.array(SNN_states[i][21:]) / 500.0)))
     mrse = rse / (res_size * (n_it - 20))
     """
+
     # set plot window size
     plt.rcParams["figure.figsize"][0] = 3.0
     plt.rcParams["figure.figsize"][1] = 12.0
     fig1 = plt.figure()
     # plot SNN_states
-    [plt.plot([y / 500 + i * 0.5 for y in SNN_states[i]], color='black') for i in range(res_size)]
+    [plt.plot([y / 500 + i * 1.0 for y in SNN_states[i]], color='black') for i in range(res_size)]
     plt.plot(0, 0, color='black', label="Population Activity")  # for label
     # plot ANN_states
-    [plt.plot(range(1, n_it), ANN_states[:, x] + x * 0.5, color='green') for x in range(res_size)]
-    plt.plot(0, 0, color='green', label="Rate-based neuron state")  # for label
+    if ANN_states != None:
+        [plt.plot(range(n_it-1), ANN_states[:, x] + x * 1.0, color='green') for x in range(res_size)]
+        plt.plot(0, 0, color='green', label="Rate-based neuron state")  # for label
     plt.legend()
     plt.xlabel("timesteps")
-    plt.ylabel("Neuron state/population activity")
+    plt.ylabel("PopulationID")
     # plt.title("MRSE = " + str(mrse) + " (discarded first 20 timesteps)")
     plt.show()
     # reset default plot window size
     plt.rcParams["figure.figsize"][0] = 8.0
     plt.rcParams["figure.figsize"][1] = 6.0
+
+def saveSNN2File(dic):
+    timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+    try:
+        with open('/home/alexander/Dropbox/UGent/Code/Python/SNNFiles/'+timestamp + '-SNNfile.pkl', 'w') as f:
+            pickle.dump(dic, f)
+    except IOError:
+        with open('SNNFiles/' + timestamp + '-SNNfile.pkl', 'w') as f:
+            pickle.dump(dic, f)
+    return
+
+def loadSNNFromFile(filename):
+    with open(filename, 'r') as f:
+        NetworkData = pickle.load(f)
+    return NetworkData
+
+def load_network_from_file_spiNNaker(filename):
+    """
+
+    :param filename: string, location of .pkl file
+    :return: Network
+    """
+    with open(filename, 'r') as f:
+        NetworkData = pickle.load(f)
+
+    Network = SpiNNNetwork4.Network(Pconnect=NetworkData['Pconnect'],
+                                    num_hidden_populations=NetworkData['num_hidden_populations'],
+                                    res_weights=NetworkData['res_weights']
+                                    , feedback_weights=NetworkData['feedback_weights'],
+                                    N_readouts=NetworkData['N_readouts'],
+                                    readout_weights=NetworkData['readout_weights'],
+                                    p_connect=NetworkData['p_connect'], Pconnect_fb=NetworkData['Pconnect_fb'])
+    return Network
