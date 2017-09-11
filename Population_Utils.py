@@ -5,7 +5,7 @@ import nest
 import pickle
 import SpiNNNetwork4
 import datetime
-
+import os
 
 def get_population_spikes(pop_list):
     """
@@ -130,26 +130,25 @@ def get_population_activities(spikes, timebin, start, stop, pop_size):
             population_activity.append(PA)
         population_activities.append(population_activity)
     return population_activities
-"""
-def get_mean_PA(pop_activities):
-    for pop_idx in range(len(pop_activities)):
-        mean_PA = []
-        for idx in range(inputs.shape[1]):
-            PA_count = 0
-            N_count = 0
-            t_start = idx * (FR_sim_dur + pause_dur) + warmup_dur + 0.01
-            t_stop = t_start + FR_sim_dur
-
-            for idx, t in enumerate(np.arange(0, sim_duration, PA_timebin)):
-                if np.logical_and(t > t_start, t <= t_stop):
-                    PA_count += population_activities[pop_idx][idx]
-                    N_count += 1
-            mean_PA.append(PA_count / N_count)
-        mean_PAs.append(mean_PA)
-"""
 
 def plot_simulation(spiketrains_in,spiketrains_hidden_exc,spiketrains_hidden_inh,population_activities,input_population_activities,PA_timebin,res_size,input_size,sim_duration,hiddenP_size,hiddenPexc_size,plot_voltage_traces=False,v_hidden_populations_exc=None):
+    """
 
+    :param spiketrains_in:
+    :param spiketrains_hidden_exc:
+    :param spiketrains_hidden_inh:
+    :param population_activities: population_activities, [[fl, fl, ...], [], ...] list of lists of floats
+    :param input_population_activities:
+    :param PA_timebin:
+    :param res_size:
+    :param input_size:
+    :param sim_duration:
+    :param hiddenP_size:
+    :param hiddenPexc_size:
+    :param plot_voltage_traces:
+    :param v_hidden_populations_exc:
+    :return:
+    """
     N_hidden_populations = res_size
     # change figure size
     plt.rcParams["figure.figsize"][0] = 11.0
@@ -219,7 +218,7 @@ def plot_simulation(spiketrains_in,spiketrains_hidden_exc,spiketrains_hidden_inh
         population_activity = np.array(population_activities[idx])
         if idx == 0:  # add label only once
             ax4.plot(np.linspace(0, sim_duration, len(population_activity)), population_activity + idx * 1000, color='black',
-                     label='Population Activity')
+                     label='Population/Monitor Neuron Activity')
         else:
             ax4.plot(np.linspace(0, sim_duration, len(population_activity)), population_activity + idx * 1000, color='black')
     summed_input_activities = [sum(x) for x in zip(*input_population_activities)]
@@ -362,6 +361,15 @@ def plot_simulation_spiNNaker(spikes_in,spikes_hidden_exc,spikes_hidden_inh,popu
     plt.rcParams["figure.figsize"][1] = 6.0
     return
 
+def plot_monitor_voltages(v):
+    plt.figure()
+    for idx, itm in enumerate(v):
+        plt.plot(itm + idx * 1000)
+    plt.xlabel("time (ms)")
+    plt.ylabel('membrane potential (mV)')
+    plt.title("monitor_voltages")
+    plt.show()
+    return
 
 def compare_states(ANN_states,SNN_states,res_size,n_it):
     """
@@ -401,11 +409,11 @@ def compare_states(ANN_states,SNN_states,res_size,n_it):
 
 def saveSNN2File(dic):
     timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
-    try:
-        with open('/home/alexander/Dropbox/UGent/Code/Python/SNNFiles/'+timestamp + '-SNNfile.pkl', 'w') as f:
-            pickle.dump(dic, f)
-    except IOError:
-        with open('SNNFiles/' + timestamp + '-SNNfile.pkl', 'w') as f:
+
+    if not os.path.isdir(os.getcwd()+'/SNNFiles'):
+        os.mkdir(os.getcwd()+'/SNNFiles')
+
+    with open(os.getcwd()+'/SNNFiles/'+timestamp + '.SNN', 'w') as f:
             pickle.dump(dic, f)
     return
 
@@ -431,3 +439,94 @@ def load_network_from_file_spiNNaker(filename):
                                     readout_weights=NetworkData['readout_weights'],
                                     p_connect=NetworkData['p_connect'], Pconnect_fb=NetworkData['Pconnect_fb'])
     return Network
+
+
+def getCoordinates(ID, xD, yD):
+    """
+    place population in grid based on id
+    :param ID: id of population, long int
+    :param xD: x dimensionality of grid, long int
+    :param yD: y dimensionality of grid, long int
+    :return: cartesian coordinates
+    """
+    if not (isinstance(ID, (int, long)) & isinstance(xD, (int, long)) & isinstance(yD, (int, long))):
+        raise Exception('population ID, xDimension and yDimension must be integer types')
+    zD = xD * yD
+
+    z = ID / zD
+    y = (ID - z * zD) / xD
+    x = ID - z * zD - y * xD
+    return x, y, z
+
+
+def getProb(ID0, ID1, xD, yD, C=0.3, lamb=1.0):
+    """
+    get distance-based connection probability for pair (ID0,ID1)
+    :param ID0: id of population 0
+    :param ID1: id of population 1
+    :param xD: x dimensionality of grid
+    :param yD: y dimensionality of grid
+    :param C: parameter to weight connectivity based on connection type (not yet implemented, from maass 2002)
+    :param lamb: parameter to in/decrease overall connectivity
+    :return: Probability of connection between any two neurons of populations ID0 and ID1
+    """
+    if ID0 == ID1:
+        prob = 0.
+    else:
+        x0, y0, z0 = getCoordinates(ID0, xD, yD)
+        x1, y1, z1 = getCoordinates(ID1, xD, yD)
+        d = np.sqrt((x0 - x1) ** 2 + (y0 - y1) ** 2 + (z0 - z1) ** 2)  # eucl distance
+        prob = C * np.power(np.e, -np.square(d / lamb))
+    return prob
+
+def createConnectivityMatrix(N):
+    """
+    create distance based connectivity matrix for N populations
+    currently defaults to stacking populations in 3by3 layers
+
+    :param N: number of populations
+    :return: connectivity matrix (to, from)
+    """
+    p_connect = np.empty((N, N))
+    for fr in range(N):
+        for to in range(N):
+            p_connect[fr, to] = getProb(to, fr, xD=3, yD=3)  # (to,from)
+    return p_connect
+
+
+def get_rand_mat(dim, spec_rad, negative_weights=True):
+    "Return a square random matrix of dimension @dim given a spectral radius @spec_rad"
+
+    mat = np.random.randn(dim, dim)
+    if not (negative_weights):
+        mat = abs(mat)
+    w, v = np.linalg.eig(mat)
+    mat = np.divide(mat, (np.amax(np.absolute(w)) / spec_rad))
+
+    return mat
+
+def InitReservoirNet(n_in=4, n_res=100, spec_rad=1.15, scale_in=5.0,
+                 negative_weights=True):
+    """
+        creates initial weights and connection probabilities
+    """
+
+    w_res = get_rand_mat(n_res, spec_rad,negative_weights=negative_weights) # (to,from)
+    # close autoconnections
+    np.fill_diagonal(w_res, 0.0)
+
+    w_in = np.random.randn(n_res, n_in) * scale_in
+
+    if not(negative_weights):
+        w_in = abs(w_in)
+
+    # close half of feedback connections
+    toKill = np.random.choice(range(n_res), int(n_res/ 2), replace=False)
+    w_in[toKill] = 0.0
+
+    p_connect_in = np.ones((n_res))*0.1 # fixed Pconnect for feedback connections
+    p_connect_in = p_connect_in.reshape(-1,1)
+
+    p_connect_res = createConnectivityMatrix(n_res) # (to,from)
+
+    return w_in, w_res, p_connect_in, p_connect_res
