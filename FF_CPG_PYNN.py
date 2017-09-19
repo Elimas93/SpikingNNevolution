@@ -38,8 +38,8 @@ res_size = 3*9                          # N hidden populations
 output_size = 1
 FR_sim_dur = 50.0                       # ms, duration of 1 (artificial net) timestep
 
-total_duration= 15000                   # ms
-learn_dur = 10000                       # ms
+total_duration= 25000                   # ms
+learn_dur = 20000                       # ms
 input_freq = 1.44                       # Hz
 sample_freq = 1./(FR_sim_dur*0.001)*5   # Hz
 samplesPerPeriod = int(1./input_freq/(FR_sim_dur*0.001))
@@ -52,21 +52,29 @@ N_uninverted = int(res_size - res_size*fraction_inverted)
 #                         create input and target signals
 # =========================================================================
 
-# ###################### Create input signal ##############################
-input_signal, input_time = RC_Utils.createInputSine(input_freq=input_freq, input_duration=total_duration/1000., sample_freq=sample_freq)
 
-# shift and scale input signal
-inp = input_signal-min(input_signal)
-inp = inp/max(inp)
-inp = inp*0.4+0.1
-inputs = inp.reshape(1,-1)
 
 # ###################### Create target signals #############################
+"""
+#solution big tigrill V1
 mu = [1247.8506096107708, 1271.4286080336062, 1350.704882789273, 1315.9368951279903] # amplitude
 o = [-6.6, -6.6, -42.9, -42.9]                                                       # offset
 omega = [8.966, 8.966, 8.966, 8.966]
 d = [0.5946128975739761, 0.5946128975739761, 0.7639788381220521, 0.7639788381220521] # duty cycle
 phase_offset = [0.0, 3.2, 3.2]
+"""
+
+cmaes_params = ['po', 'd0','d1', 'offset_front', 'offset_back']
+cmaes_result = [3.2413127551, 0.211397468, 0.7326430427, -21.1273863722, -44.701767989] #2017-9-18-19-42-32_smallTigrillo_V1_0
+cmaes_dict = dict((x,y) for x, y in zip(cmaes_params,cmaes_result))
+
+#for small tigrillo V1
+mu = [1247.8506096107708, 1271.4286080336062, 1350.704882789273, 1315.9368951279903] # amplitude
+o = [cmaes_dict['offset_front'], cmaes_dict['offset_front'], cmaes_dict['offset_back'], cmaes_dict['offset_back']] # offset
+omega = [8.966, 8.966, 8.966, 8.966]
+d = [cmaes_dict['d0'], cmaes_dict['d0'], cmaes_dict['d1'], cmaes_dict['d1']] # duty cycle
+phase_offset = [0.0, cmaes_dict['po'], cmaes_dict['po']]
+
 cpg = gcpg.CPGControl(mu, o, omega, d, phase_offset)
 
 sig = np.transpose([ cpg.step_open_loop() for i in range(total_duration)]) #siebes cpg generator presumably with sample frequency of 1000 Hz
@@ -78,20 +86,20 @@ for idx, row in enumerate(sig):
     sig2[idx] = row[::downfactor]
 
 # Normalize target signal
-offset = []
-multiplier = []
-for idx, row in enumerate(sig2):
-    offset.append(abs(min(row)))
-    sig2[idx] = row+abs(min(row))
-    multiplier.append(max(row))
-    sig2[idx] = row/max(row)
+#offset = []
+#multiplier = []
+#for idx, row in enumerate(sig2):
+#    offset.append(abs(min(row)))
+#    sig2[idx] = row+abs(min(row))
+#    multiplier.append(max(row))
+#    sig2[idx] = row/max(row)
 
 
 y_signals = [list(x) for x in sig2]
 N_readouts = len(y_signals)
 
 # ################### Plot input and target signals #######################
-plt.plot(inp,label="input")
+
 [plt.plot([s + idx for s in y]) for idx,y in enumerate(y_signals)]
 plt.xlabel("Timestep")
 # plt.legend()
@@ -138,7 +146,6 @@ pause_dur = 0.0  # ms, time between input spiketrains of different frequency
 warmup_dur = 51.0  # ms, warmup period
 cooldown_dur = 0.0  # ms, cooldown period
 input_spike_train = [ [] for input in range(input_size)]
-input_FRs = inputs*500.0  # convert input for rate based neuron ([0.0,1.0]) to Firing Rate ([0,1000.0/msrefractoryperiod]),
 weights_readout = [] #original readout weigths zero
 for i in range(N_readouts):
     weights_readout.append(np.zeros((res_size,1)))
@@ -159,9 +166,9 @@ neuron_parameters = {
 
 readout_parameters = {
     'cm': 0.2,
-    'v_reset': -75,
-    'v_rest': -65,
-    'v_thresh': 5000,
+    'v_reset': -15,
+    'v_rest': 0,
+    'v_thresh': float('inf'),
     'tau_m': 30.0,  # sim.RandomDistribution('uniform', (10.0, 15.0)),
     'tau_refrac': 0.1,
     'tau_syn_E': 5.5,  # np.linspace(0.1, 20, hiddenP_size),
@@ -497,7 +504,6 @@ plt.show()
 
 fig = plt.figure()
 plt.plot(np.array(input_mean_PAs[0])/500.0,color='blue',label='input population PA')
-plt.plot(np.transpose(inputs[:,0::5]),color='red',label="input signal")
 plt.legend()
 plt.show()
 
